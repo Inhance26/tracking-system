@@ -1,7 +1,8 @@
-# Root-level build for RunPod's GitHub integration, which looks for a
-# Dockerfile at the repository root. Mirrors runpod_serverless/Dockerfile,
-# but with the build context at the repo root, so every COPY is prefixed
-# with runpod_serverless/. Keep the two in sync.
+# Serverless worker image, built by RunPod's GitHub integration.
+#
+# Both this file and handler.py sit at the repository root because RunPod's
+# pre-deploy check scans root-level files for runpod.serverless.start() and
+# reports the handler as missing when it lives in a subdirectory.
 #
 # Note the requirements file below is the SERVERLESS one, not the root
 # requirements.txt - the root file is for running app.py locally and has
@@ -16,7 +17,7 @@ RUN pip install --no-cache-dir -r /requirements.txt
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" \
     && mv yolov8n.pt /yolov8n.pt
 
-COPY runpod_serverless/handler.py /handler.py
+COPY handler.py /handler.py
 WORKDIR /
 ENV MODEL_PATH=/yolov8n.pt
 

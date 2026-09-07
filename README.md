@@ -291,7 +291,9 @@ make_demo_video.py   generates synthetic test footage, if you ever want it
 cctv_footage.mp4     the workshop clip
 zones.json           the five zones traced onto it
 .vscode/             launch configurations and interpreter settings
-runpod_serverless/   Docker image + handler for the --detector runpod GPU endpoint
+handler.py           the --detector runpod GPU worker (root, so RunPod finds it)
+Dockerfile           builds that worker image
+runpod_serverless/   deploy notes and the worker's own requirements.txt
 ```
 
 Detection lives in `detector.py`:
@@ -303,8 +305,8 @@ Detection lives in `detector.py`:
   frame to a square, decodes the raw grid output (centres are grid-relative,
   sizes are exponential), filters to COCO class 0, then NMS. No PyTorch.
 - `RunPodDetector` — JPEG-encodes each frame, POSTs it to a RunPod Serverless
-  endpoint (`runpod_serverless/handler.py`, running the same Ultralytics
-  model on a cloud GPU), and parses the boxes back. No local model at all.
+  endpoint (`handler.py`, running the same Ultralytics model on a cloud GPU),
+  and parses the boxes back. No local model at all.
 - `HogDetector` / `DemoDetector` — no model at all.
 
 `tracker.py` supplies IDs for every backend except `yolo`, which brings its own.

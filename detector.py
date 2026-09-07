@@ -190,8 +190,8 @@ class RunPodDetector:
     """Sends each frame to a RunPod Serverless GPU endpoint for YOLO detection.
 
     Needs no local torch/ultralytics install - only `requests`. The endpoint
-    runs runpod_serverless/handler.py; deploy it first (see that folder's
-    README), then point this at it with the endpoint ID and API key.
+    runs handler.py; deploy it first (see runpod_serverless/README.md), then
+    point this at it with the endpoint ID and API key.
 
     Has no local model, so it has no tracker either - IDs come from
     tracker.py, same as the hog/yolox backends.
@@ -206,7 +206,7 @@ class RunPodDetector:
             raise SystemExit(
                 "The 'runpod' detector needs an endpoint ID.\n"
                 "  --runpod-endpoint <id>   or set RUNPOD_ENDPOINT_ID\n"
-                "Deploy runpod_serverless/ first - see its README."
+                "Deploy the endpoint first - see runpod_serverless/README.md."
             )
         if not api_key:
             raise SystemExit(

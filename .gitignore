@@ -13,7 +13,7 @@ __pycache__/
 *.key
 
 # Model weights (auto-downloaded by get_models.py / ultralytics,
-# and baked into the RunPod image by runpod_serverless/Dockerfile)
+# and baked into the RunPod worker image by the root Dockerfile)
 *.pt
 *.onnx
 

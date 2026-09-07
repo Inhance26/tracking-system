@@ -19,13 +19,21 @@ small (`--imgsz 640`) unless you provision an always-on worker. It's the
 right fit when your dev machine has no/weak GPU, since detection happens on
 RunPod's hardware instead.
 
-## 1. Build and push the image
+The worker itself lives at the repository root - `handler.py` and the
+`Dockerfile` that builds it. They sit there rather than in this folder
+because RunPod's pre-deploy check scans root-level files for
+`runpod.serverless.start()` and reports the handler as missing when it is in
+a subdirectory. This folder keeps the deploy notes and the worker's own
+`requirements.txt` (headless opencv plus the runpod SDK, which the root
+`requirements.txt` deliberately does not carry).
 
-You need a Docker Hub (or other registry) account; RunPod pulls the image
-from there.
+## 1. Get the image built
+
+Either let RunPod build it from GitHub - **Serverless** → **New Endpoint** →
+choose the GitHub source and pick this repo and branch, no Docker needed
+locally - or build and push it yourself, from the repository root:
 
 ```powershell
-cd runpod_serverless
 docker build -t <your-dockerhub-username>/retail-tracker-detector:latest .
 docker push <your-dockerhub-username>/retail-tracker-detector:latest
 ```
@@ -33,7 +41,7 @@ docker push <your-dockerhub-username>/retail-tracker-detector:latest
 ## 2. Create the Serverless endpoint
 
 1. Sign in at [runpod.io](https://www.runpod.io) → **Serverless** → **New Endpoint**.
-2. **Container Image**: `<your-dockerhub-username>/retail-tracker-detector:latest`
+2. **Source**: the GitHub repo, or the image you pushed above.
 3. **GPU**: any CUDA GPU works for `yolov8n` (e.g. 16 GB tier is plenty).
 4. **Active Workers**: `0` is cheapest (pay only per request, but the first
    request after idle time pays a cold-start delay of several seconds while
