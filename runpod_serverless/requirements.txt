@@ -1,0 +1,4 @@
+runpod>=1.6
+ultralytics>=8.1
+opencv-python-headless>=4.8
+numpy>=1.24

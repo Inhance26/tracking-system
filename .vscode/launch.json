@@ -1,0 +1,116 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Check setup (YOLO self-test)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/check_setup.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Run tracker (CCTV footage + YOLO)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Run tracker (YOLOX - no PyTorch needed)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--detector",
+        "yolox",
+        "--imgsz",
+        "640",
+        "--conf",
+        "0.15",
+        "--frame-skip",
+        "2",
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Run tracker (RunPod cloud GPU)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--detector",
+        "runpod",
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "env": {
+        "RUNPOD_ENDPOINT_ID": "${env:RUNPOD_ENDPOINT_ID}",
+        "RUNPOD_API_KEY": "${env:RUNPOD_API_KEY}"
+      }
+    },
+    {
+      "name": "Run tracker (HOG - weak, plumbing test only)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--detector",
+        "hog",
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Run tracker (faster - skip frames)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--frame-skip",
+        "3",
+        "--width",
+        "640",
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Run tracker (pick a video...)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "args": [
+        "--source",
+        "${input:videoSource}",
+        "--open"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "videoSource",
+      "type": "promptString",
+      "description": "Video file path, rtsp:// URL, or webcam index (0)",
+      "default": "cctv_footage.mp4"
+    }
+  ]
+}

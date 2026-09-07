@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secrets - never commit RunPod / registry credentials
+.env
+.env.*
+*.key
+
+# Model weights (auto-downloaded by get_models.py / ultralytics,
+# and baked into the RunPod image by runpod_serverless/Dockerfile)
+*.pt
+*.onnx
+
+# Runtime output
+zone_visits.csv
+*.log

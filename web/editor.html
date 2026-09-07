@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Zone Editor · People Tracker</title>
+<style>
+  :root{
+    --bg:#0e1013; --panel:#171a1f; --panel-2:#1e222a; --line:#2a2f39;
+    --text:#e9edf2; --muted:#8b95a5; --accent:#5ec574;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:14px 22px;
+         border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:16px;margin:0;font-weight:650}
+  .spacer{flex:1}
+  a.link{color:var(--muted);text-decoration:none;font-size:13px;
+         border:1px solid var(--line);padding:6px 12px;border-radius:7px}
+  a.link:hover{color:var(--text)}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;padding:18px 22px}
+  @media (max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+
+  .stage{background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+         position:relative;min-height:220px;align-self:start}
+  canvas{display:block;width:100%;height:auto;cursor:crosshair;touch-action:none}
+  /* pointer-events:none matters - otherwise this overlay eats clicks and you
+     cannot place zone corners in the bottom-left of the frame. */
+  .hint{position:absolute;left:12px;bottom:12px;background:rgba(10,12,15,.82);
+        border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+        font-size:12.5px;color:var(--muted);max-width:min(420px,80%);
+        pointer-events:none;transition:opacity .2s}
+  .hint.dim{opacity:.25}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:16px;margin-bottom:14px}
+  h2{font-size:11.5px;text-transform:uppercase;letter-spacing:1.3px;color:var(--muted);
+     margin:0 0 12px;font-weight:600}
+  #list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  #list li{display:flex;align-items:center;gap:10px;background:var(--panel-2);
+     border-radius:9px;padding:9px 11px}
+  #list li.sel{outline:1px solid var(--accent)}
+  .swatch{width:10px;height:22px;border-radius:3px;flex:none;cursor:pointer}
+  #list input{flex:1;min-width:0;background:none;border:none;color:var(--text);
+           font:inherit;font-size:14px;padding:2px 0}
+  #list input:focus{outline:none;border-bottom:1px solid var(--line)}
+  .x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;
+     line-height:1;padding:0 2px}
+  .x:hover{color:#e0736b}
+
+  button.act{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);
+             background:var(--panel-2);color:var(--text);font:inherit;font-weight:600;
+             cursor:pointer;margin-top:10px}
+  button.act:hover{border-color:#3c434f}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#0d1a10}
+  button.primary:hover{filter:brightness(1.07)}
+  button.act:disabled{opacity:.45;cursor:not-allowed}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6}
+  .status{font-size:12.5px;margin-top:10px;min-height:16px;color:var(--accent)}
+  .status.err{color:#e0736b}
+  ol{margin:0;padding-left:18px;color:var(--muted);font-size:12.8px;line-height:1.75}
+</style>
+</head>
+<body>
+<header>
+  <h1>Zone Editor</h1>
+  <span class="spacer"></span>
+  <a class="link" href="/">← Dashboard</a>
+</header>
+
+<main>
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint">Click to place corners · double-click or press <b>Enter</b> to close the zone · <b>Backspace</b> undoes a point · <b>Esc</b> cancels</div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Zones</h2>
+      <ul id="list"></ul>
+      <div class="note" id="none">Nothing drawn yet — click on the camera view to outline your first zone.</div>
+      <button class="act primary" id="save">Save zones</button>
+      <button class="act" id="reload">Refresh camera image</button>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>How to draw</h2>
+      <ol>
+        <li>Outline the <b>floor area</b> of a zone, not the shelving.</li>
+        <li>A person counts into a zone when their <b>feet</b> land inside it.</li>
+        <li>Keep zones from overlapping; if they do, the one higher in this list wins.</li>
+        <li>Rename a zone by clicking its name.</li>
+      </ol>
+    </div>
+  </div>
+</main>
+
+<script>
+const PALETTE = [[59,176,255],[116,197,94],[240,122,86],[240,130,216],[226,200,60],[120,200,200]];
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const listEl = document.getElementById('list'), noneEl = document.getElementById('none');
+const statusEl = document.getElementById('status');
+
+let img = new Image();
+let zones = [];        // {id,name,points:[[nx,ny]],color:[b,g,r]}
+let draft = [];        // points of the polygon being drawn
+let selected = -1;
+let hover = null;
+
+function setStatus(msg, err){ statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
+
+function loadSnapshot(){
+  const next = new Image();
+  next.onload = () => { img = next; fit(); draw(); };
+  next.onerror = () => setStatus('No camera frame yet — is app.py running?', true);
+  next.src = '/snapshot.jpg?t=' + Date.now();
+}
+
+function fit(){
+  if (!img.width) return;
+  cv.width = img.width; cv.height = img.height;   // canvas pixels == frame pixels
+}
+
+function rgbOf(c){ return `rgb(${c[2]},${c[1]},${c[0]})`; }   // stored BGR -> css
+
+function draw(){
+  if (!cv.width) return;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if (img.width) ctx.drawImage(img,0,0,cv.width,cv.height);
+
+  zones.forEach((z,i) => drawPoly(z.points, rgbOf(z.color), z.name, i === selected));
+  if (draft.length){
+    const pts = hover ? draft.concat([hover]) : draft;
+    drawPoly(pts, '#5ec574', '', true, true);
+    draft.forEach(p => dot(p, '#5ec574'));
+  }
+}
+
+function drawPoly(points, color, label, active, open){
+  if (points.length < 2) { if (points.length) dot(points[0], color); return; }
+  ctx.beginPath();
+  points.forEach((p,i) => {
+    const x = p[0]*cv.width, y = p[1]*cv.height;
+    i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+  });
+  if (!open) ctx.closePath();
+  ctx.fillStyle = color.replace('rgb(','rgba(').replace(')',',0.22)');
+  if (!open) ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = active ? 3 : 2;
+  ctx.setLineDash(open ? [7,5] : []);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (label){
+    const top = points.reduce((a,p) => p[1] < a[1] ? p : a);
+    const x = top[0]*cv.width, y = Math.max(20, top[1]*cv.height - 8);
+    ctx.font = '600 15px ui-sans-serif,system-ui,sans-serif';
+    const w = ctx.measureText(label).width;
+    ctx.fillStyle = color; ctx.fillRect(x-3, y-17, w+10, 22);
+    ctx.fillStyle = '#12161b'; ctx.fillText(label, x+2, y-1);
+  }
+}
+
+function dot(p, color){
+  ctx.beginPath();
+  ctx.arc(p[0]*cv.width, p[1]*cv.height, 5, 0, Math.PI*2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = '#0e1013'; ctx.lineWidth = 2; ctx.stroke();
+}
+
+function toNorm(ev){
+  const r = cv.getBoundingClientRect();
+  return [ (ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height ];
+}
+
+cv.addEventListener('click', ev => {
+  if (!cv.width) return;
+  draft.push(toNorm(ev));
+  document.getElementById('hint').classList.add('dim');  // get out of the way while drawing
+  draw();
+});
+cv.addEventListener('mousemove', ev => { if (draft.length){ hover = toNorm(ev); draw(); } });
+cv.addEventListener('mouseleave', () => { hover = null; draw(); });
+cv.addEventListener('dblclick', ev => { ev.preventDefault(); commit(); });
+
+document.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT') return;
+  if (ev.key === 'Enter') commit();
+  else if (ev.key === 'Escape'){ draft = []; hover = null; draw(); }
+  else if (ev.key === 'Backspace'){ ev.preventDefault(); draft.pop(); draw(); }
+});
+
+function commit(){
+  // A double-click adds a duplicate point first — drop it before validating.
+  if (draft.length > 3){
+    const a = draft[draft.length-1], b = draft[draft.length-2];
+    if (Math.hypot(a[0]-b[0], a[1]-b[1]) < 0.006) draft.pop();
+  }
+  if (draft.length < 3){ setStatus('A zone needs at least 3 corners.', true); return; }
+  const n = zones.length;
+  zones.push({
+    id: 'zone_' + (n+1),
+    name: 'Zone ' + (n+1),
+    points: draft,
+    color: PALETTE[n % PALETTE.length],
+  });
+  draft = []; hover = null; selected = zones.length - 1;
+  setStatus('');
+  renderList(); draw();
+}
+
+function renderList(){
+  listEl.innerHTML = '';
+  noneEl.hidden = zones.length > 0;
+  zones.forEach((z,i) => {
+    const li = document.createElement('li');
+    if (i === selected) li.className = 'sel';
+
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.style.background = rgbOf(z.color);
+    sw.title = 'Change colour';
+    sw.onclick = () => {
+      const cur = PALETTE.findIndex(p => p.join() === z.color.join());
+      z.color = PALETTE[(cur + 1) % PALETTE.length];
+      renderList(); draw();
+    };
+
+    const input = document.createElement('input');
+    input.value = z.name;
+    input.oninput = () => { z.name = input.value; draw(); };
+    // Note: do NOT re-render the list here - it would replace this very input
+    // and drop the caret mid-typing.
+    input.onfocus = () => { selected = i; highlight(); draw(); };
+
+    const x = document.createElement('button');
+    x.className = 'x'; x.textContent = '×'; x.title = 'Delete zone';
+    x.onclick = () => { zones.splice(i,1); selected = -1; renderList(); draw(); };
+
+    li.append(sw, input, x);
+    li.onmouseenter = () => { selected = i; highlight(); draw(); };
+    listEl.appendChild(li);
+  });
+}
+
+function highlight(){
+  [...listEl.children].forEach((li,i) => li.classList.toggle('sel', i === selected));
+}
+
+document.getElementById('save').onclick = async () => {
+  try {
+    const r = await fetch('/api/zones', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({zones}),
+    });
+    const j = await r.json();
+    if (j.ok) setStatus(`Saved ${j.count} zone${j.count===1?'':'s'} — counting live now.`);
+    else setStatus(j.error || 'Save failed', true);
+  } catch (e) { setStatus('Could not reach the server.', true); }
+};
+document.getElementById('reload').onclick = loadSnapshot;
+
+(async function init(){
+  loadSnapshot();
+  try {
+    const r = await fetch('/api/zones', {cache:'no-store'});
+    zones = (await r.json()).zones || [];
+  } catch (e) { zones = []; }
+  renderList(); draw();
+})();
+</script>
+</body>
+</html>

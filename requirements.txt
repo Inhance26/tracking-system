@@ -1,0 +1,11 @@
+# Core - always needed
+opencv-python>=4.8
+numpy>=1.24
+
+# Person detection. Pulls in torch (~800 MB on first install).
+# Skip this if you only want to try the app with --detector demo, hog or runpod.
+ultralytics>=8.1
+
+# Needed only for --detector runpod (calls a RunPod Serverless GPU endpoint
+# instead of running YOLO locally - no torch/ultralytics needed on this machine).
+requests>=2.31

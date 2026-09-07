@@ -1,0 +1,18 @@
+{
+  "title": "Retail Tracker Person Detector",
+  "description": "YOLOv8 person detection for the zone people-tracker. Takes one base64 JPEG frame, returns person boxes in normalised 0..1 coordinates. Tracking and dwell timing stay on the client.",
+  "type": "serverless",
+  "category": "video",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 20,
+    "gpuCount": 1,
+    "gpuIds": "ADA_24",
+    "env": [
+      {
+        "key": "MODEL_PATH",
+        "value": "/yolov8n.pt"
+      }
+    ]
+  }
+}
