@@ -1,0 +1,32 @@
+# The serverless image only needs runpod_serverless/. Everything else is the
+# local app (video capture, tracking, dashboard) and would just bloat the
+# build context RunPod uploads.
+
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+
+cctv_footage.mp4
+*.mp4
+*.pt
+*.onnx
+
+web/
+models/
+.vscode/
+.runpod/
+
+app.py
+detector.py
+dwell.py
+pipeline.py
+server.py
+tracker.py
+zones.py
+zones.json
+check_setup.py
+get_models.py
+make_demo_video.py
+requirements.txt
+*.bat
