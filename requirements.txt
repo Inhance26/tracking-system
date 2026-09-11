@@ -9,3 +9,7 @@ ultralytics>=8.1
 # Needed only for --detector runpod (calls a RunPod Serverless GPU endpoint
 # instead of running YOLO locally - no torch/ultralytics needed on this machine).
 requests>=2.31
+
+# Needed only by export_db.py, to write the .xlsx export. The CSV half of the
+# export is stdlib-only and works without it.
+openpyxl>=3.1
