@@ -6,7 +6,7 @@ same contract detector.py's local backends use. No tracking/IDs here - a
 serverless endpoint may run on a different worker (or a fresh one) on every
 call, so track continuity is handled locally by tracker.py instead.
 
-Input:  {"input": {"image": "<base64 jpeg>", "conf": 0.25, "imgsz": 960}}
+Input:  {"input": {"image": "<base64 jpeg>", "conf": 0.25, "imgsz": 1280}}
 Output: {"boxes": [[x1, y1, x2, y2, conf], ...]}   # coords in 0..1
 """
 
@@ -20,7 +20,7 @@ import numpy as np
 import runpod
 from ultralytics import YOLO
 
-MODEL_PATH = os.environ.get("MODEL_PATH", "yolov8n.pt")
+MODEL_PATH = os.environ.get("MODEL_PATH", "/weights.pt")
 model = YOLO(MODEL_PATH)
 
 
@@ -40,7 +40,7 @@ def handler(event):
         return {"error": "missing 'input.image' (base64-encoded JPEG)"}
 
     conf = float(job_input.get("conf", 0.25))
-    imgsz = int(job_input.get("imgsz", 960))
+    imgsz = int(job_input.get("imgsz", 1280))
 
     frame = _decode_image(image_b64)
     h, w = frame.shape[:2]
@@ -56,7 +56,10 @@ def handler(event):
             xyxy = r.boxes.xyxy.cpu().numpy()
             confs = r.boxes.conf.cpu().numpy()
             for (x1, y1, x2, y2), c in zip(xyxy, confs):
-                boxes.append([x1 / w, y1 / h, x2 / w, y2 / h, float(c)])
+                # Plain floats, not numpy float32 - the JSON response has to
+                # survive serialisation on the worker.
+                boxes.append([float(x1) / w, float(y1) / h,
+                              float(x2) / w, float(y2) / h, float(c)])
 
     return {"boxes": boxes}
 

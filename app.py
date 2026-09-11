@@ -32,10 +32,15 @@ from server import serve  # noqa: E402
 
 
 # Defaults are tuned for the bundled 848x478 workshop clip:
-#   width 848  - its native size, so nothing is up- or down-scaled
-#   imgsz 960  - give YOLO more pixels than the frame has; helps on the small,
-#                distant figures at the back of the shop floor
-#   conf  0.25 - lower than stock, for the same reason
+#   width 848   - its native size, so nothing is up- or down-scaled
+#   imgsz 1280  - give YOLO far more pixels than the frame has. The workers at
+#                 the back of the shop are only ~12x40 px; measured over the
+#                 clip, 960 -> 1280 lifts the headcount from 2.6 to 3.7 against
+#                 a true 4-5. See calibrate.py.
+#   conf  0.25  - lower than stock, for the same reason
+#   yolov8s     - yolov8n is the smallest model in the family and misses the
+#                 distant workers; measured on this clip, s counts 4.1 vs n's
+#                 3.7 at the same input size
 DEFAULT_SOURCE = os.path.join(HERE, "cctv_footage.mp4")
 
 
@@ -43,14 +48,16 @@ DEFAULT_SOURCE = os.path.join(HERE, "cctv_footage.mp4")
 class Config:
     source: str
     detector: str = "yolo"
-    weights: str = "yolov8n.pt"
+    weights: str = "yolov8s.pt"
     device: str | None = None
     conf: float = 0.25
-    imgsz: int = 960
+    imgsz: int = 1280
     width: int = 848
     frame_skip: int = 1
     max_age: int = 30
-    min_hits: int = 3
+    min_hits: int = 3          # detections before a track joins the headcount
+    count_coast: int = 5       # frames a lost track stays counted
+    dedupe_ios: float = 0.6    # overlap above which two boxes are one person
     jpeg_quality: int = 80
     loop: bool = True
     zones_path: str = os.path.join(HERE, "zones.json")
@@ -89,15 +96,30 @@ def parse_args(argv=None) -> Config:
                         "Defaults to $RUNPOD_API_KEY")
     p.add_argument("--runpod-timeout", type=float, default=10.0,
                    help="seconds to wait for each RunPod detection call")
-    p.add_argument("--weights", default="yolov8n.pt",
-                   help="YOLO weights (yolov8n.pt is fine on CPU; yolov8s.pt is more accurate)")
+    p.add_argument("--weights", default="yolov8s.pt",
+                   help="YOLO weights. yolov8s finds noticeably more of the small, "
+                        "distant people than yolov8n at ~2x the cost; drop to "
+                        "yolov8n.pt on a slow CPU, raise to yolov8x.pt on a GPU")
     p.add_argument("--device", default=None, help="cpu, 0, mps ... (YOLO only)")
     p.add_argument("--conf", type=float, default=0.25, help="detection confidence threshold")
-    p.add_argument("--imgsz", type=int, default=960, help="YOLO inference size")
+    p.add_argument("--imgsz", type=int, default=1280,
+                   help="detector input size; the big lever on whether small, "
+                        "distant people are found at all (was 960)")
     p.add_argument("--width", type=int, default=848,
                    help="processing width in px (smaller = faster; 0 keeps the native size)")
     p.add_argument("--frame-skip", type=int, default=1,
                    help="run detection every Nth frame (2-3 helps a lot on CPU)")
+    p.add_argument("--min-hits", type=int, default=3,
+                   help="frames a person must be detected on before they are "
+                        "counted (raise to reject flickering false positives)")
+    p.add_argument("--max-age", type=int, default=30,
+                   help="frames a lost track is kept before it is discarded")
+    p.add_argument("--count-coast", type=int, default=5,
+                   help="frames a briefly-lost person stays in the headcount, so "
+                        "the number doesn't jitter when a detection drops (0 = off)")
+    p.add_argument("--dedupe-ios", type=float, default=0.6,
+                   help="overlap (as a fraction of the smaller box) above which two "
+                        "boxes are treated as the same person (0 disables)")
     p.add_argument("--long-dwell", type=float, default=120,
                    help="seconds in one zone before a person is highlighted "
                         "amber on the video (0 disables)")
@@ -116,6 +138,8 @@ def parse_args(argv=None) -> Config:
     return Config(
         source=a.source, detector=a.detector, weights=a.weights, device=a.device,
         conf=a.conf, imgsz=a.imgsz, width=a.width, frame_skip=a.frame_skip,
+        min_hits=a.min_hits, max_age=a.max_age, count_coast=a.count_coast,
+        dedupe_ios=a.dedupe_ios,
         jpeg_quality=a.jpeg_quality, loop=not a.no_loop, zones_path=a.zones,
         host=a.host, port=a.port, verbose=a.verbose, open_browser=a.open,
         yolox_model=a.yolox_model or _default_yolox_model(),

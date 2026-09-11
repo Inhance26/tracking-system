@@ -101,8 +101,11 @@ class Pipeline(threading.Thread):
         cfg = self.cfg
         detector = build_detector(cfg)
         supplies_ids = getattr(detector, "name", "") == "yolo"
-        simple = SimpleTracker(max_age=cfg.max_age, min_hits=cfg.min_hits)
-        passthrough = PassthroughTracker(max_age=cfg.max_age)
+        coast = int(getattr(cfg, "count_coast", 0))
+        simple = SimpleTracker(max_age=cfg.max_age, min_hits=cfg.min_hits,
+                               max_coast=coast)
+        passthrough = PassthroughTracker(max_age=cfg.max_age, min_hits=cfg.min_hits,
+                                         max_coast=coast)
 
         cap = open_capture(cfg.source)
         src_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
@@ -168,7 +171,7 @@ class Pipeline(threading.Thread):
                     "zone": zid,
                     "dwell_s": round(t.dwell_seconds, 1),
                     "zone_s": round(t.zone_seconds, 1),
-                    "bbox": [round(v, 4) for v in t.bbox],
+                    "bbox": [round(float(v), 4) for v in t.bbox],
                 })
 
             self.dwell.update(people, now)

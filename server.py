@@ -18,6 +18,16 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 BOUNDARY = "retailframe"
 
 
+def _jsonable(obj):
+    """Last-resort coercion for anything json doesn't know (numpy scalars)."""
+    item = getattr(obj, "item", None)
+    if callable(item):
+        return item()
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    return str(obj)
+
+
 def make_handler(state, pipeline, cfg):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -39,7 +49,12 @@ def make_handler(state, pipeline, cfg):
             self.wfile.write(body)
 
         def _json(self, payload, code=200):
-            self._send(code, json.dumps(payload).encode("utf-8"), "application/json")
+            # default=_jsonable: a single numpy scalar leaking in from a detector
+            # used to raise here, and a raised exception means no response at all -
+            # the dashboard's fetch() fails and it silently keeps showing stale
+            # numbers. Coerce instead of dying.
+            body = json.dumps(payload, default=_jsonable).encode("utf-8")
+            self._send(code, body, "application/json")
 
         def _static(self, filename, ctype):
             path = os.path.join(WEB_DIR, filename)

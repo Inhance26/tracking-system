@@ -11,7 +11,7 @@
     "env": [
       {
         "key": "MODEL_PATH",
-        "value": "/yolov8n.pt"
+        "value": "/weights.pt"
       }
     ]
   }

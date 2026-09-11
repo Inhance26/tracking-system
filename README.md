@@ -115,7 +115,7 @@ unless you keep an always-on worker.
 python check_setup.py
 ```
 
-It checks every dependency, loads `yolov8n.pt`, runs detection on 12 frames of
+It checks every dependency, loads `yolov8s.pt`, runs detection on 12 frames of
 the bundled footage, and tells you how many people it found, how big they were
 in pixels, and how fast your machine is. It also writes **`yolo_check.jpg`** —
 the frame with the most detections, boxes drawn — so you can see for yourself
@@ -134,6 +134,78 @@ A healthy result on this clip looks roughly like:
 
 If it says ultralytics is missing, `pip install ultralytics`. If it runs but
 finds nobody, try `python app.py --conf 0.15`.
+
+---
+
+## Calibrating the headcount
+
+"People in view" is the end of a chain, and each link can be the one that is
+wrong:
+
+```
+model -> --conf -> --dedupe-ios -> --min-hits -> --count-coast -> the number
+```
+
+`calibrate.py` measures that number over a clip so you can compare settings
+instead of eyeballing the video:
+
+```powershell
+# what your current settings actually report
+python calibrate.py --frames 400
+
+# does a bigger model find the people at the back?
+python calibrate.py --frames 60 --stride 12 --sweep-weights yolov8n.pt,yolov8x.pt --imgsz 1280
+
+# you counted 4 people in that stretch - how often does it agree?
+python calibrate.py --frames 400 --expect 4
+```
+
+It reports the mean count, its range, how often the number changes between
+frames (the jitter you see on the dashboard), and — with `--expect` — how often
+it is exactly right.
+
+**Under-counting** (the usual problem) means the detector never saw someone.
+Only the model and its input size fix that; no amount of tracker tuning
+invents a missed person. On this clip, at 848×478 with workers at the back
+about 12×40 px:
+
+| setting | mean count |
+|---|---|
+| `yolov8n --imgsz 960` *(the old defaults)* | 2.6 |
+| `yolov8n --imgsz 1280` | 3.7 |
+| `yolov8s --imgsz 1280` *(the defaults now)* | 4.1 |
+| `yolov8x --imgsz 1280` *(the GPU worker)* | 4.3 |
+
+Raising `--imgsz` costs nothing but GPU time and is the first thing to try.
+Lowering `--conf` also surfaces faint figures, at the price of false positives.
+
+**Over-counting** has two causes, both handled by default now:
+
+- *Two boxes on one person.* Ultralytics' NMS compares IoU, so a small box
+  nested inside a larger one scores ~0.65 and survives the 0.7 cutoff — one
+  person, counted twice. `--dedupe-ios 0.6` measures overlap against the
+  smaller box instead, where a nested duplicate scores 1.0. Set `0` to disable.
+- *Flickering false positives.* `--min-hits 3` requires a person to be detected
+  on three frames before they join the count, so one frame of a track id on a
+  stack of pipes doesn't register.
+
+**Jitter** — the number bouncing 4-3-4 while nobody moved — is the detector
+dropping someone for a frame. `--count-coast 5` keeps a lost person counted for
+five more frames. On this clip that cut the frame-to-frame changes from 8.1% to
+2.0%.
+
+If you run detection on a GPU (`--detector runpod`), the worker now builds with
+`yolov8x` — on a GPU the extra latency is close to free. Build a smaller worker
+with:
+
+```powershell
+docker build --build-arg YOLO_WEIGHTS=yolov8s.pt .
+```
+
+Note the local default (`yolov8s`) and the worker default (`yolov8x`) differ, so
+the same clip will not give identical counts through `--detector yolo` and
+`--detector runpod`. The `x`-over-`s` margin above came from a 60-frame sample
+and is small enough to be worth re-measuring on your own footage.
 
 ---
 
@@ -238,13 +310,17 @@ Tuned for the bundled clip; all still overridable on the command line.
 |---|---|---|---|
 | `--source` | `cctv_footage.mp4` | *required* | so `python app.py` just runs |
 | `--width` | `848` | `960` | the clip's native width — no rescaling |
-| `--imgsz` | `960` | `640` | more pixels than the frame has, which helps YOLO find the small figures at the back |
+| `--imgsz` | `1280` | `640` | far more pixels than the frame has; the biggest single lever on whether the small figures at the back are found at all |
 | `--conf` | `0.25` | `0.35` | same reason — don't discard faint distant people |
 | `--host` | `127.0.0.1` | `0.0.0.0` | serves only to this machine; no firewall prompt |
 
+Counting flags: `--min-hits`, `--count-coast`, `--dedupe-ios` — see
+[Calibrating the headcount](#calibrating-the-headcount).
+
 Other flags: `--long-dwell`, `--dwell-csv`,
-`--detector` (`yolo`/`runpod`/`yolox`/`hog`/`demo`), `--yolox-model`, `--weights` (`yolov8s.pt` is
-more accurate, ~2× slower), `--device` (`cpu`, `0`, `mps`), `--frame-skip`,
+`--detector` (`yolo`/`runpod`/`yolox`/`hog`/`demo`), `--yolox-model`, `--weights`
+(`yolov8n.pt` is ~2× faster and less accurate; `yolov8x.pt` is better still on a
+GPU), `--device` (`cpu`, `0`, `mps`), `--frame-skip`,
 `--port`, `--zones`, `--no-loop`, `--open`, `--verbose`,
 `--runpod-endpoint`, `--runpod-api-key`, `--runpod-timeout` (`--detector runpod` only;
 see [`runpod_serverless/README.md`](runpod_serverless/README.md)).
@@ -262,11 +338,13 @@ and should be found reliably. Three things will limit accuracy:
   edge, so they can be placed in the wrong zone. This is the main source of
   error on this footage.
 - **The background is small.** People at the far end are 20–40 px tall. Some
-  will be missed even at `--imgsz 960`.
+  will be missed even at `--imgsz 1280`, and a bigger model finds more of them
+  than a bigger input size does — see
+  [Calibrating the headcount](#calibrating-the-headcount).
 - **Few people.** With one to three on screen, a single miss is a large
   percentage error.
 
-The first YOLO run downloads `yolov8n.pt` (~6 MB) automatically.
+The first YOLO run downloads `yolov8s.pt` (~22 MB) automatically.
 
 ---
 

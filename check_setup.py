@@ -19,6 +19,10 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 VIDEO = os.path.join(HERE, "cctv_footage.mp4")
 SAMPLE_FRAMES = 12
+# Kept in step with app.Config.weights / .imgsz by hand - importing app here
+# would pull in the whole pipeline just to read two constants.
+WEIGHTS = "yolov8s.pt"
+IMGSZ = 1280
 OUT_IMAGE = os.path.join(HERE, "yolo_check.jpg")
 
 OK, BAD, INFO = "  [ok] ", "  [!!] ", "       "
@@ -74,14 +78,16 @@ def main() -> int:
         print(f"{INFO}Meanwhile the app still runs with:  python app.py --detector hog")
         return 1
 
-    print(f"{INFO}loading yolov8n.pt (downloads ~6 MB on first run)...")
+    # Check the weights app.py actually defaults to, not a different model -
+    # a setup that passes here should be a setup the app runs on.
+    print(f"{INFO}loading {WEIGHTS} (downloads on first run)...")
     try:
-        model = YOLO("yolov8n.pt")
+        model = YOLO(WEIGHTS)
     except Exception as exc:  # noqa: BLE001 - any failure here is worth showing plainly
         cap.release()
         print(f"{BAD}Could not load the model: {exc}")
         print(f"{INFO}Usually no internet on the first run. Connect and retry, or")
-        print(f"{INFO}download yolov8n.pt manually into this folder.")
+        print(f"{INFO}download {WEIGHTS} manually into this folder.")
         return 1
     print(f"{OK}model loaded")
 
@@ -99,7 +105,7 @@ def main() -> int:
         ok, frame = cap.read()
         if not ok:
             break
-        res = model.predict(frame, classes=[0], conf=0.25, imgsz=960, verbose=False)
+        res = model.predict(frame, classes=[0], conf=0.25, imgsz=IMGSZ, verbose=False)
         boxes = res[0].boxes
         count = 0 if boxes is None else len(boxes)
         total_people += count

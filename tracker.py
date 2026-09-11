@@ -65,11 +65,13 @@ class SimpleTracker:
         max_age: int = 30,
         min_hits: int = 3,
         max_center_dist: float = 0.12,  # normalised frame widths
+        max_coast: int = 0,
     ) -> None:
         self.iou_threshold = iou_threshold
         self.max_age = max_age
         self.min_hits = min_hits
         self.max_center_dist = max_center_dist
+        self.max_coast = max_coast
         self._tracks: Dict[int, Track] = {}
         self._next_id = 1
 
@@ -127,16 +129,26 @@ class SimpleTracker:
         return self.confirmed()
 
     def confirmed(self) -> List[Track]:
-        """Tracks steady enough to show and count."""
-        return [t for t in self._tracks.values() if t.hits >= self.min_hits and t.age == 0]
+        """Tracks steady enough to show and count.
+
+        `age <= max_coast` keeps someone in the headcount for a few frames
+        after the detector loses them. Detectors drop people behind a pillar or
+        a passing forklift constantly, and counting strictly on age == 0 makes
+        the number visibly jitter (4 - 3 - 4) when nobody actually moved.
+        """
+        return [t for t in self._tracks.values()
+                if t.hits >= self.min_hits and t.age <= self.max_coast]
 
 
 class PassthroughTracker:
     """Wraps detector-supplied IDs (YOLO/ByteTrack) in the same Track objects,
     so zone dwell timing works identically across backends."""
 
-    def __init__(self, max_age: int = 30) -> None:
+    def __init__(self, max_age: int = 30, min_hits: int = 3,
+                 max_coast: int = 0) -> None:
         self.max_age = max_age
+        self.min_hits = min_hits
+        self.max_coast = max_coast
         self._tracks: Dict[int, Track] = {}
 
     def update(self, detections: Sequence[Tuple[BBox, float, int]]) -> List[Track]:
@@ -159,7 +171,14 @@ class PassthroughTracker:
                 t.age += 1
                 if t.age > self.max_age:
                     del self._tracks[tid]
-        return [t for t in self._tracks.values() if t.age == 0]
+        return self.confirmed()
 
     def confirmed(self) -> List[Track]:
-        return [t for t in self._tracks.values() if t.age == 0]
+        """Same confirmation rule as SimpleTracker.
+
+        This used to return every track with age == 0, which meant min_hits was
+        silently ignored on the YOLO backend: one frame of a ByteTrack id on a
+        shadow or a stack of pipes was enough to bump the headcount.
+        """
+        return [t for t in self._tracks.values()
+                if t.hits >= self.min_hits and t.age <= self.max_coast]

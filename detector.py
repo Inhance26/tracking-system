@@ -31,6 +31,47 @@ import numpy as np
 
 Box = Tuple[Tuple[float, float, float, float], float]
 
+# Overlap (as a fraction of the smaller box) above which two boxes are
+# treated as the same person. 0 disables de-duplication.
+DEDUPE_IOS = 0.6
+
+
+def _intersection_over_smaller(a, b) -> float:
+    """Overlap as a fraction of the SMALLER box.
+
+    IoU is the wrong measure for nested duplicates: a small box sitting
+    entirely inside a large one scores only ~0.65 IoU, sliding under the 0.7
+    NMS threshold, so both survive and one person gets counted twice. Measured
+    against the smaller box, a fully nested duplicate scores 1.0.
+    """
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    smaller = min(area_a, area_b)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def dedupe(items, thresh: float = DEDUPE_IOS):
+    """Drop weaker boxes that are really a second box on the same person.
+
+    `items` are tuples whose [0] is the bbox and [1] the confidence; any extra
+    fields (e.g. a track id) ride along untouched. Kept strongest-first, so the
+    most confident box for each person wins.
+    """
+    if thresh <= 0 or len(items) < 2:
+        return list(items)
+    kept = []
+    for it in sorted(items, key=lambda i: -i[1]):
+        if any(_intersection_over_smaller(it[0], k[0]) > thresh for k in kept):
+            continue
+        kept.append(it)
+    return kept
+
 
 class YoloDetector:
     """Ultralytics YOLO restricted to the COCO 'person' class (id 0)."""
@@ -39,7 +80,8 @@ class YoloDetector:
 
     def __init__(self, weights: str = "yolov8n.pt", conf: float = 0.35,
                  imgsz: int = 640, device: str | None = None,
-                 tracker_cfg: str = "bytetrack.yaml") -> None:
+                 tracker_cfg: str = "bytetrack.yaml",
+                 dedupe_ios: float = DEDUPE_IOS) -> None:
         try:
             from ultralytics import YOLO  # noqa: WPS433 (import here so other backends work without it)
         except ImportError as exc:  # pragma: no cover
@@ -54,7 +96,7 @@ class YoloDetector:
         except Exception as exc:  # noqa: BLE001 - weights download / load failure
             raise SystemExit(
                 f"Could not load YOLO weights '{weights}': {exc}\n"
-                "The first run downloads yolov8n.pt (~6 MB), so this usually means\n"
+                "The first run downloads the weights, so this usually means\n"
                 "no internet connection. Connect and retry, or place the .pt file\n"
                 "next to app.py."
             ) from exc
@@ -62,6 +104,7 @@ class YoloDetector:
         self.imgsz = imgsz
         self.device = device
         self.tracker_cfg = tracker_cfg
+        self.dedupe_ios = dedupe_ios
 
     def detect(self, frame: np.ndarray):
         h, w = frame.shape[:2]
@@ -88,11 +131,22 @@ class YoloDetector:
         raw_ids = r.boxes.id
         raw_ids = raw_ids.cpu().numpy().astype(int) if raw_ids is not None else None
 
+        items = []
         for i in range(len(xyxy)):
             x1, y1, x2, y2 = xyxy[i]
-            boxes.append(((x1 / w, y1 / h, x2 / w, y2 / h), float(confs[i])))
-            if raw_ids is not None:
-                ids.append(int(raw_ids[i]))
+            # float() matters: numpy float32 survives round() and later blows up
+            # json.dumps() in /api/stats, which silently kills the dashboard.
+            items.append((
+                (float(x1) / w, float(y1) / h, float(x2) / w, float(y2) / h),
+                float(confs[i]),
+                int(raw_ids[i]) if raw_ids is not None else None,
+            ))
+
+        # Deduped as triples so each surviving box keeps its own track id.
+        for bbox, conf, tid in dedupe(items, self.dedupe_ios):
+            boxes.append((bbox, conf))
+            if tid is not None:
+                ids.append(tid)
         return boxes, (ids if raw_ids is not None else None)
 
 
@@ -111,7 +165,7 @@ class YoloxDetector:
     STRIDES = (8, 16, 32)
 
     def __init__(self, model_path: str, conf: float = 0.25, imgsz: int = 640,
-                 nms: float = 0.45) -> None:
+                 nms: float = 0.45, dedupe_ios: float = DEDUPE_IOS) -> None:
         if not os.path.exists(model_path):
             raise SystemExit(
                 f"YOLOX model not found: {model_path}\n"
@@ -120,6 +174,7 @@ class YoloxDetector:
         self.net = cv2.dnn.readNetFromONNX(model_path)
         self.conf = conf
         self.nms = nms
+        self.dedupe_ios = dedupe_ios
         # The network is fully convolutional but the grid maths below needs a
         # square input that divides by 32.
         self.size = max(320, int(round(imgsz / 32)) * 32)
@@ -183,7 +238,7 @@ class YoloxDetector:
                  min(1.0, (x + bw) / w), min(1.0, (y + bh) / h)),
                 float(score[i]),
             ))
-        return boxes, None
+        return dedupe(boxes, self.dedupe_ios), None
 
 
 class RunPodDetector:
@@ -200,8 +255,8 @@ class RunPodDetector:
     name = "runpod"
 
     def __init__(self, endpoint_id: str, api_key: str, conf: float = 0.25,
-                 imgsz: int = 960, timeout: float = 10.0,
-                 jpeg_quality: int = 85) -> None:
+                 imgsz: int = 1280, timeout: float = 10.0,
+                 jpeg_quality: int = 85, dedupe_ios: float = DEDUPE_IOS) -> None:
         if not endpoint_id:
             raise SystemExit(
                 "The 'runpod' detector needs an endpoint ID.\n"
@@ -230,6 +285,7 @@ class RunPodDetector:
         self.imgsz = imgsz
         self.timeout = timeout
         self.jpeg_quality = jpeg_quality
+        self.dedupe_ios = dedupe_ios
         self._last_error_log = 0.0
 
     def detect(self, frame: np.ndarray):
@@ -264,8 +320,8 @@ class RunPodDetector:
 
         boxes: List[Box] = []
         for x1, y1, x2, y2, conf in output.get("boxes", []):
-            boxes.append(((x1, y1, x2, y2), float(conf)))
-        return boxes, None
+            boxes.append(((float(x1), float(y1), float(x2), float(y2)), float(conf)))
+        return dedupe(boxes, self.dedupe_ios), None
 
 
 class HogDetector:
@@ -327,15 +383,17 @@ class DemoDetector:
 
 def build_detector(cfg) -> object:
     kind = (cfg.detector or "yolo").lower()
+    ios = float(getattr(cfg, "dedupe_ios", DEDUPE_IOS))
     if kind == "yolo":
         return YoloDetector(weights=cfg.weights, conf=cfg.conf, imgsz=cfg.imgsz,
-                            device=cfg.device)
+                            device=cfg.device, dedupe_ios=ios)
     if kind == "yolox":
         return YoloxDetector(model_path=cfg.yolox_model, conf=cfg.conf,
-                             imgsz=cfg.imgsz)
+                             imgsz=cfg.imgsz, dedupe_ios=ios)
     if kind == "runpod":
         return RunPodDetector(endpoint_id=cfg.runpod_endpoint, api_key=cfg.runpod_api_key,
-                              conf=cfg.conf, imgsz=cfg.imgsz, timeout=cfg.runpod_timeout)
+                              conf=cfg.conf, imgsz=cfg.imgsz, timeout=cfg.runpod_timeout,
+                              dedupe_ios=ios)
     if kind == "hog":
         return HogDetector(conf=cfg.conf)
     if kind == "demo":
