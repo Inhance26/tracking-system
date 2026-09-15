@@ -254,6 +254,59 @@ two. The totals are reliable; individual journeys are not.
 
 ---
 
+## Pose keypoints
+
+`--pose` adds a 2D skeleton — 17 COCO keypoints — to every tracked person.
+
+```powershell
+python app.py --pose
+```
+
+This **replaces** the detection model with a pose model rather than running a
+second one over the crops. Keypoints then come out of the same forward pass as
+the boxes, already on the same row, so a skeleton needs no matching step to
+find its track ID — it arrives attached to one. The cost is that `--weights` no
+longer applies under `--pose`, and the headcount is not the one `calibrate.py`
+measured for `yolov8s`; re-run it before trusting counts.
+
+Nothing changes unless you pass the flag. Without it the app behaves exactly as
+before, and no pose model is loaded.
+
+### Not every skeleton is worth keeping
+
+The people at the back of this clip are about 12×40 px. A skeleton fitted to a
+40 px-tall figure is noise in the shape of a person, and feeding those to a
+behaviour model trains it on invented motion. So every pose is scored and
+gated, and the gate is visible on the video: **white skeletons passed, grey
+ones were found but rejected.**
+
+Pick the thresholds from your own footage rather than from the defaults:
+
+```powershell
+python pose_audit.py
+```
+
+It reports how many joints the model actually finds at each person size, sweeps
+the height threshold, and writes `pose_check.jpg`. The column that matters is
+*core joints* — once it falls below roughly 8 of 12, skeletons at that size are
+guesses. Put `--pose-min-height` at that boundary.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--pose` | off | turn keypoints on |
+| `--pose-weights` | `yolo11s-pose.pt` | `yolo11m/x-pose.pt` find more small people, ~free on a GPU |
+| `--pose-min-height` | `80` | bbox px below which a skeleton is marked unusable |
+| `--pose-min-kp-conf` | `0.5` | confidence below which a joint counts as not found |
+| `--pose-min-core` | `8` | of the 12 torso/limb joints (the 5 face joints never count) |
+
+`/api/stats` gains a `pose` block with the gate settings and how many of the
+tracked people currently pass it, and each person gains a `pose` summary
+(`height_px`, `visible_core`, `usable`, `score`). The keypoints themselves are
+deliberately **not** served there — the dashboard has no use for them and they
+would dominate the payload.
+
+---
+
 ## The zones
 
 `zones.json` already contains five zones traced onto the workshop clip:
@@ -317,6 +370,9 @@ Tuned for the bundled clip; all still overridable on the command line.
 Counting flags: `--min-hits`, `--count-coast`, `--dedupe-ios` — see
 [Calibrating the headcount](#calibrating-the-headcount).
 
+Pose flags: `--pose`, `--pose-weights`, `--pose-min-height`,
+`--pose-min-kp-conf`, `--pose-min-core` — see [Pose keypoints](#pose-keypoints).
+
 Other flags: `--long-dwell`, `--dwell-csv`,
 `--detector` (`yolo`/`runpod`/`yolox`/`hog`/`demo`), `--yolox-model`, `--weights`
 (`yolov8n.pt` is ~2× faster and less accurate; `yolov8x.pt` is better still on a
@@ -362,6 +418,8 @@ detector.py          the three detector backends (YOLO lives here)
 tracker.py           IoU + centroid tracker (used when the detector has no IDs)
 zones.py             polygon storage and point-in-polygon assignment
 dwell.py             per-zone visit timing, averages and the CSV log
+pose.py              COCO-17 skeleton schema, quality scoring and the gate
+pose_audit.py        measures whether pose is usable on your footage
 server.py            stdlib HTTP server: MJPEG, stats, zone save/load
 web/dashboard.html   the live dashboard
 web/editor.html      the zone editor

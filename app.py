@@ -68,6 +68,15 @@ class Config:
     runpod_timeout: float = 10.0         # seconds per-frame HTTP call may take
     long_dwell: float = 120.0          # seconds before a stay is flagged amber
     dwell_csv: str | None = None       # optional log of completed zone visits
+    # -- pose (phase 1) -----------------------------------------------------
+    # Off by default: --pose swaps the detection model for a pose model, which
+    # changes the headcount this app reports. Nothing about the existing
+    # behaviour moves unless you ask for it.
+    pose: bool = False
+    pose_weights: str = "yolo11s-pose.pt"
+    pose_min_height: float = 80.0      # px of bbox height to trust a skeleton
+    pose_min_kp_conf: float = 0.5      # per-keypoint confidence to count as seen
+    pose_min_core: int = 8             # of 12 torso/limb joints, to pass the gate
     host: str = "127.0.0.1"
     port: int = 8000
     verbose: bool = False
@@ -126,6 +135,27 @@ def parse_args(argv=None) -> Config:
     p.add_argument("--dwell-csv", default=None, metavar="FILE",
                    help="append every completed zone visit to a CSV "
                         "(e.g. --dwell-csv zone_visits.csv)")
+    p.add_argument("--pose", action="store_true",
+                   help="extract 2D skeletons as well as boxes. Replaces the "
+                        "detection model with a pose model (one pass, so "
+                        "keypoints arrive already attached to their track ID), "
+                        "which means --weights no longer applies and the "
+                        "headcount is not the one calibrate.py measured for "
+                        "yolov8s - re-run it before trusting counts")
+    p.add_argument("--pose-weights", default="yolo11s-pose.pt",
+                   help="pose model to use with --pose. yolo11s-pose is the "
+                        "sensible default; yolo11m/x-pose find more of the "
+                        "small, distant people and are close to free on a GPU")
+    p.add_argument("--pose-min-height", type=float, default=80.0,
+                   help="bbox height in px below which a skeleton is marked "
+                        "unusable (drawn grey, excluded from behaviour data). "
+                        "Measure yours with pose_audit.py rather than guessing")
+    p.add_argument("--pose-min-kp-conf", type=float, default=0.5,
+                   help="per-keypoint confidence below which a joint is treated "
+                        "as not found")
+    p.add_argument("--pose-min-core", type=int, default=8,
+                   help="how many of the 12 torso/limb joints must be found for "
+                        "a pose to pass the gate (the 5 face joints never count)")
     p.add_argument("--jpeg-quality", type=int, default=80)
     p.add_argument("--no-loop", action="store_true", help="stop at the end of a video file")
     p.add_argument("--zones", default=os.path.join(HERE, "zones.json"))
@@ -146,6 +176,9 @@ def parse_args(argv=None) -> Config:
         runpod_endpoint=a.runpod_endpoint, runpod_api_key=a.runpod_api_key,
         runpod_timeout=a.runpod_timeout,
         long_dwell=a.long_dwell, dwell_csv=a.dwell_csv,
+        pose=a.pose, pose_weights=a.pose_weights,
+        pose_min_height=a.pose_min_height, pose_min_kp_conf=a.pose_min_kp_conf,
+        pose_min_core=a.pose_min_core,
     )
 
 
@@ -181,6 +214,9 @@ def main(argv=None) -> int:
     print(f"  Zone editor {url}/editor")
     print(f"  Source      {os.path.basename(str(cfg.source))}")
     print(f"  Detector    {cfg.detector}      Zones: {os.path.basename(cfg.zones_path)}")
+    if cfg.pose:
+        print(f"  Pose        {cfg.pose_weights}  gate: >={cfg.pose_min_height:.0f}px, "
+              f">={cfg.pose_min_core}/12 joints")
     print(f"  Stop with Ctrl+C\n")
     if cfg.open_browser:
         webbrowser.open(url)

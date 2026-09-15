@@ -13,9 +13,16 @@ Four backends, all returning boxes in NORMALISED frame coordinates:
   demo   - Replays pre-recorded boxes from a JSON file (see make_demo_video.py).
            Lets you exercise the dashboard with zero models.
 
-Each detector's detect(frame) returns (boxes, track_ids) where boxes is a list
-of ((x1, y1, x2, y2), confidence) and track_ids is either None (let the local
-tracker assign IDs) or a list of ints aligned with boxes.
+Each detector's detect(frame) returns (boxes, track_ids, keypoints):
+
+  boxes      list of ((x1, y1, x2, y2), confidence), normalised
+  track_ids  None (let tracker.py assign IDs) or a list of ints aligned to boxes
+  keypoints  None, or a list aligned to boxes of (kp_xy, kp_conf) where kp_xy is
+             17 normalised (x, y) pairs in COCO order and kp_conf 17 floats.
+             See pose.py. Only the yolo backend fills this in, and only when
+             loaded with pose weights.
+
+All three lists stay index-aligned through de-duplication.
 """
 
 from __future__ import annotations
@@ -105,6 +112,10 @@ class YoloDetector:
         self.device = device
         self.tracker_cfg = tracker_cfg
         self.dedupe_ios = dedupe_ios
+        # Asking the loaded model rather than trusting a flag: pass -pose
+        # weights through --weights and keypoints still come out, and a plain
+        # detection model can never be mistaken for one that emits them.
+        self.pose = getattr(self.model, "task", "") == "pose"
 
     def detect(self, frame: np.ndarray):
         h, w = frame.shape[:2]
@@ -120,34 +131,58 @@ class YoloDetector:
         )
         boxes: List[Box] = []
         ids: List[int] = []
+        kpts: List[object] = []
         if not results:
-            return boxes, None
+            return boxes, None, None
         r = results[0]
         if r.boxes is None or len(r.boxes) == 0:
-            return boxes, []
+            return boxes, [], ([] if self.pose else None)
 
         xyxy = r.boxes.xyxy.cpu().numpy()
         confs = r.boxes.conf.cpu().numpy()
         raw_ids = r.boxes.id
         raw_ids = raw_ids.cpu().numpy().astype(int) if raw_ids is not None else None
 
+        # Keypoints come out of the SAME forward pass, row-aligned with boxes,
+        # so pose needs no association step - row i of one is row i of the
+        # other. That alignment is the whole reason for using a pose model here
+        # rather than running a second, top-down estimator over the crops.
+        kp_xy = kp_cf = None
+        if self.pose and r.keypoints is not None:
+            kp_xy = r.keypoints.xy.cpu().numpy()          # (N, 17, 2) in pixels
+            if r.keypoints.conf is not None:
+                kp_cf = r.keypoints.conf.cpu().numpy()    # (N, 17)
+
         items = []
         for i in range(len(xyxy)):
             x1, y1, x2, y2 = xyxy[i]
+            pose_i = None
+            if kp_xy is not None and i < len(kp_xy):
+                # Normalised like the boxes, so a --width resize downstream
+                # leaves them valid.
+                pose_i = (
+                    [[float(x) / w, float(y) / h] for x, y in kp_xy[i]],
+                    [float(c) for c in kp_cf[i]] if kp_cf is not None
+                    else [0.0] * len(kp_xy[i]),
+                )
             # float() matters: numpy float32 survives round() and later blows up
             # json.dumps() in /api/stats, which silently kills the dashboard.
             items.append((
                 (float(x1) / w, float(y1) / h, float(x2) / w, float(y2) / h),
                 float(confs[i]),
                 int(raw_ids[i]) if raw_ids is not None else None,
+                pose_i,
             ))
 
-        # Deduped as triples so each surviving box keeps its own track id.
-        for bbox, conf, tid in dedupe(items, self.dedupe_ios):
+        # Deduped as tuples so each surviving box keeps its own id and pose.
+        for bbox, conf, tid, pose_i in dedupe(items, self.dedupe_ios):
             boxes.append((bbox, conf))
             if tid is not None:
                 ids.append(tid)
-        return boxes, (ids if raw_ids is not None else None)
+            kpts.append(pose_i)
+        return (boxes,
+                (ids if raw_ids is not None else None),
+                (kpts if self.pose else None))
 
 
 class YoloxDetector:
@@ -217,7 +252,7 @@ class YoloxDetector:
 
         keep = (cid == 0) & (score > self.conf)   # COCO class 0 is 'person'
         if not keep.any():
-            return [], None
+            return [], None, None
 
         cxcy, wh, score = cxcy[keep], wh[keep], score[keep]
         # xywh in original-frame pixels (undo the letterbox scale)
@@ -227,7 +262,7 @@ class YoloxDetector:
 
         idx = cv2.dnn.NMSBoxes(xywh.tolist(), score.tolist(), float(self.conf), self.nms)
         if len(idx) == 0:
-            return [], None
+            return [], None, None
         idx = np.array(idx).flatten()
 
         boxes: List[Box] = []
@@ -238,7 +273,7 @@ class YoloxDetector:
                  min(1.0, (x + bw) / w), min(1.0, (y + bh) / h)),
                 float(score[i]),
             ))
-        return dedupe(boxes, self.dedupe_ios), None
+        return dedupe(boxes, self.dedupe_ios), None, None
 
 
 class RunPodDetector:
@@ -293,7 +328,7 @@ class RunPodDetector:
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
         if not ok:
-            return [], None
+            return [], None, None
         image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
         payload = {"input": {"image": image_b64, "conf": self.conf, "imgsz": self.imgsz}}
@@ -308,7 +343,7 @@ class RunPodDetector:
             if now - self._last_error_log > 5.0:  # don't spam the console every frame
                 print(f"  [runpod] request failed: {exc}")
                 self._last_error_log = now
-            return [], None
+            return [], None, None
 
         output = body.get("output") or {}
         if "error" in output:
@@ -316,12 +351,12 @@ class RunPodDetector:
             if now - self._last_error_log > 5.0:
                 print(f"  [runpod] endpoint error: {output['error']}")
                 self._last_error_log = now
-            return [], None
+            return [], None, None
 
         boxes: List[Box] = []
         for x1, y1, x2, y2, conf in output.get("boxes", []):
             boxes.append(((float(x1), float(y1), float(x2), float(y2)), float(conf)))
-        return dedupe(boxes, self.dedupe_ios), None
+        return dedupe(boxes, self.dedupe_ios), None, None
 
 
 class HogDetector:
@@ -351,7 +386,7 @@ class HogDetector:
                 (x / sw, y / sh, (x + bw) / sw, (y + bh) / sh),
                 float(score),
             ))
-        return boxes, None
+        return boxes, None, None
 
 
 class DemoDetector:
@@ -375,17 +410,33 @@ class DemoDetector:
 
     def detect(self, frame: np.ndarray):
         if not self.frames:
-            return [], None
+            return [], None, None
         boxes_raw = self.frames[self.i % len(self.frames)]
         self.i += 1
-        return [((b[0], b[1], b[2], b[3]), 0.9) for b in boxes_raw], None
+        return [((b[0], b[1], b[2], b[3]), 0.9) for b in boxes_raw], None, None
 
 
 def build_detector(cfg) -> object:
     kind = (cfg.detector or "yolo").lower()
     ios = float(getattr(cfg, "dedupe_ios", DEDUPE_IOS))
+    want_pose = bool(getattr(cfg, "pose", False))
+    if want_pose and kind != "yolo":
+        raise SystemExit(
+            f"--pose needs the yolo backend, not '{kind}'.\n"
+            "Keypoints come out of the same forward pass as the boxes, so the\n"
+            "detector itself has to be a pose model. The runpod worker will\n"
+            "gain this in a later phase; yolox/hog/demo never will."
+        )
     if kind == "yolo":
-        return YoloDetector(weights=cfg.weights, conf=cfg.conf, imgsz=cfg.imgsz,
+        # Pose weights REPLACE the detection weights rather than running
+        # alongside them - one model, one pass, boxes and keypoints already
+        # aligned. The cost is that --weights no longer applies, and the
+        # headcount this model reports is not the one calibrate.py measured
+        # for yolov8s. Re-run calibrate.py before trusting counts under --pose.
+        weights = cfg.weights
+        if want_pose:
+            weights = getattr(cfg, "pose_weights", None) or "yolo11s-pose.pt"
+        return YoloDetector(weights=weights, conf=cfg.conf, imgsz=cfg.imgsz,
                             device=cfg.device, dedupe_ios=ios)
     if kind == "yolox":
         return YoloxDetector(model_path=cfg.yolox_model, conf=cfg.conf,

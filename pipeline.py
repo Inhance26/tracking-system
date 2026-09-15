@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 import cv2
 import numpy as np
 
+import pose as pose_mod
 from detector import build_detector
 from dwell import ZoneDwell, format_duration
 from tracker import PassthroughTracker, SimpleTracker
@@ -27,6 +28,11 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 PERSON_COLOR = (120, 235, 120)   # BGR, green like the reference overlay
 LINGER_COLOR = (70, 190, 245)    # amber - someone lingering past --long-dwell
 TEXT_COLOR = (20, 20, 20)
+# Skeletons are drawn in two colours so the quality gate is visible on the
+# video itself: white means the pose passed and a behaviour model could use it,
+# grey means it was found but rejected as too small or too uncertain.
+POSE_OK_COLOR = (235, 235, 235)
+POSE_WEAK_COLOR = (110, 110, 110)
 
 
 class SharedState:
@@ -101,6 +107,9 @@ class Pipeline(threading.Thread):
         cfg = self.cfg
         detector = build_detector(cfg)
         supplies_ids = getattr(detector, "name", "") == "yolo"
+        # Set by the detector from the loaded model's task, not from the flag,
+        # so this is true only when keypoints will really arrive.
+        pose_on = bool(getattr(detector, "pose", False))
         coast = int(getattr(cfg, "count_coast", 0))
         simple = SimpleTracker(max_age=cfg.max_age, min_hits=cfg.min_hits,
                                max_coast=coast)
@@ -136,16 +145,24 @@ class Pipeline(threading.Thread):
             h, w = frame.shape[:2]
 
             if frame_no % skip == 0 or frame_no == 1:
-                boxes, ids = detector.detect(frame)
+                boxes, ids, kpts = detector.detect(frame)
                 if supplies_ids:
                     # ByteTrack occasionally reports boxes before it has assigned
                     # IDs (ids is None). Skip those few frames rather than mixing
                     # two ID spaces - the same people reappear a frame later.
                     pairs = [(b, c, i) for (b, c), i in zip(boxes, ids or [])]
-                    tracks = passthrough.update(pairs)
+                    active = passthrough
+                    tracks = passthrough.update(pairs, keypoints=kpts)
                 else:
-                    tracks = simple.update(boxes)
+                    active = simple
+                    tracks = simple.update(boxes, keypoints=kpts)
+                if pose_on:
+                    self._attach_poses(tracks, active.matched_pose, frame_no, h)
             else:
+                # A skipped frame produces no new pose. Tracks keep the last one
+                # they were given rather than appending a duplicate to their
+                # history, which would put a stall into the sequence a
+                # behaviour model later reads.
                 tracks = (passthrough if supplies_ids else simple).confirmed()
 
             zones = self.current_zones()
@@ -166,13 +183,23 @@ class Pipeline(threading.Thread):
                     unassigned += 1
                 else:
                     zone_counts[zid] += 1
-                people.append({
+                person = {
                     "id": int(t.id),
                     "zone": zid,
                     "dwell_s": round(t.dwell_seconds, 1),
                     "zone_s": round(t.zone_seconds, 1),
                     "bbox": [round(float(v), 4) for v in t.bbox],
-                })
+                }
+                if pose_on:
+                    # A quality summary only. The 17 keypoints themselves are
+                    # deliberately NOT published here - /api/stats is polled by
+                    # every open dashboard, and shipping full skeletons through
+                    # it would cost far more bandwidth than the dashboard has
+                    # any use for. sequences.py writes them to disk in a later
+                    # phase, which is where a behaviour model should read them.
+                    q = t.pose_quality
+                    person["pose"] = q.as_dict() if q is not None else None
+                people.append(person)
 
             self.dwell.update(people, now)
             dwell_stats = self.dwell.snapshot(now)
@@ -186,12 +213,27 @@ class Pipeline(threading.Thread):
 
             fps = (sum(self._fps_hist) / len(self._fps_hist)) if self._fps_hist else 0.0
 
+            pose_block = None
+            if pose_on:
+                with_pose = [t for t in tracks if t.pose_quality is not None]
+                usable = [t for t in with_pose if t.pose_usable]
+                pose_block = {
+                    "enabled": True,
+                    "tracked": len(tracks),
+                    "with_pose": len(with_pose),
+                    "usable": len(usable),
+                    "min_height_px": round(float(self.cfg.pose_min_height), 1),
+                    "min_kp_conf": round(float(self.cfg.pose_min_kp_conf), 2),
+                    "min_core_visible": int(self.cfg.pose_min_core),
+                }
+
             stats = {
                 "running": True,
                 "fps": round(fps, 1),
                 "total_in_store": len(tracks),
                 "unassigned": unassigned,
                 "frame": frame_no,
+                "pose": pose_block,
                 "timestamp": now,
                 "long_dwell_s": float(getattr(self.cfg, "long_dwell", 0) or 0),
                 "zones": [
@@ -226,6 +268,31 @@ class Pipeline(threading.Thread):
         s["running"] = False
         self.state.publish(self.state.read_jpeg(), self.state.read_raw_jpeg(),
                            s, self.state.frame_size)
+
+    # -----------------------------------------------------------------------
+    def _attach_poses(self, tracks, matched_pose, frame_no: int, frame_h: int) -> None:
+        """Hang this frame's skeletons on the track IDs they belong to.
+
+        `matched_pose` is track id -> the detector's (keypoints, confidences)
+        for the detection that track matched. The tracker fills it in because
+        it is the only place that knows which detection went with which ID;
+        doing it here instead would mean re-deriving a matching that has
+        already been done.
+
+        frame_h is the height of the frame the MODEL saw, after any --width
+        resize, so the gate measures the pixels actually available to it.
+        """
+        for t in tracks:
+            p = matched_pose.get(int(t.id))
+            quality = None
+            if p is not None:
+                quality = pose_mod.assess(
+                    t.bbox, p[1], frame_h,
+                    min_height_px=self.cfg.pose_min_height,
+                    min_kp_conf=self.cfg.pose_min_kp_conf,
+                    min_core_visible=self.cfg.pose_min_core,
+                )
+            t.attach_pose(p, quality, frame_no)
 
     # -----------------------------------------------------------------------
     def _annotate(self, frame, tracks, zones, zone_counts, total, zone_time=None):
@@ -263,6 +330,10 @@ class Pipeline(threading.Thread):
             colour = LINGER_COLOR if lingering else PERSON_COLOR
             cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
             cv2.circle(out, ((x1 + x2) // 2, y2), 3, colour, -1, cv2.LINE_AA)
+            if t.keypoints:
+                _draw_skeleton(out, t.keypoints, t.kp_conf, w, h, t.pose_usable,
+                               float(getattr(self.cfg, "pose_min_kp_conf",
+                                             pose_mod.MIN_KP_CONF)))
             label = f"#{t.id}  {format_duration(secs)}" if t.zone_id else f"#{t.id}"
             _draw_label(out, label, (x1, max(16, y1 - 6)), colour)
 
@@ -270,6 +341,31 @@ class Pipeline(threading.Thread):
         cv2.rectangle(out, (0, 0), (w, 34), (28, 26, 24), -1)
         cv2.putText(out, banner, (12, 24), FONT, 0.66, (245, 245, 245), 2, cv2.LINE_AA)
         return out
+
+
+def _draw_skeleton(img, keypoints, kp_conf, w: int, h: int,
+                   usable: bool, min_kp_conf: float) -> None:
+    """Draw one person's bones and joints over the frame.
+
+    Joints below `min_kp_conf` are not drawn, and a bone is drawn only when
+    both of its ends are. A skeleton with limbs missing is an honest picture of
+    what the model found; one drawn through low-confidence guesses looks
+    convincing and is not - which matters here, because the whole point of
+    phase 1 is judging by eye whether these poses are good enough to use.
+    """
+    conf = kp_conf or [1.0] * len(keypoints)
+    colour = POSE_OK_COLOR if usable else POSE_WEAK_COLOR
+    pts = []
+    for i, (nx, ny) in enumerate(keypoints):
+        seen = i < len(conf) and conf[i] >= min_kp_conf
+        pts.append((int(round(nx * w)), int(round(ny * h))) if seen else None)
+
+    for a, b in pose_mod.SKELETON:
+        if a < len(pts) and b < len(pts) and pts[a] and pts[b]:
+            cv2.line(img, pts[a], pts[b], colour, 1, cv2.LINE_AA)
+    for pt in pts:
+        if pt:
+            cv2.circle(img, pt, 2, colour, -1, cv2.LINE_AA)
 
 
 def _fmt_dwell(seconds: float) -> str:

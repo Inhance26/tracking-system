@@ -78,7 +78,7 @@ def run(args, weights: str, conf: float) -> dict:
             h = int(frame.shape[0] * args.width / frame.shape[1])
             frame = cv2.resize(frame, (args.width, h))
 
-        boxes, ids = detector.detect(frame)
+        boxes, ids, _kpts = detector.detect(frame)
         if supplies_ids:
             tracks = tracker.update(
                 [(b, c, i) for (b, c), i in zip(boxes, ids or [])])

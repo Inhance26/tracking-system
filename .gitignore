@@ -20,3 +20,7 @@ __pycache__/
 # Runtime output
 zone_visits.csv
 *.log
+
+# Self-test / audit images, regenerated on demand
+yolo_check.jpg
+pose_check.jpg

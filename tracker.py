@@ -12,10 +12,17 @@ stops being counted.
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 BBox = Tuple[float, float, float, float]
+
+# How many frames of pose history a track carries. sequences.py will read
+# windows out of this in a later phase; here it just has to be long enough to
+# cover the longest window a downstream ST-GCN would want (100 frames is the
+# usual ceiling) without letting a long-lived track grow without bound.
+POSE_HISTORY = 128
 
 
 def iou(a: BBox, b: BBox) -> float:
@@ -49,6 +56,39 @@ class Track:
     zone_id: Optional[str] = None
     zone_since: float = field(default_factory=time.time)
 
+    # --- pose (phase 1) ----------------------------------------------------
+    # Whatever the model produced on the most recent matched frame, normalised
+    # like bbox. None on non-pose backends, and on frames where the detector
+    # found a box but no skeleton.
+    keypoints: Optional[List[List[float]]] = None
+    kp_conf: Optional[List[float]] = None
+    # pose.PoseQuality for that same frame, or None. `pose_usable` is the
+    # field a downstream sequence writer should filter on.
+    pose_quality: Optional[Any] = None
+    # Rolling history, appended only on frames where a pose was attached.
+    # Entries are (frame_no, keypoints, kp_conf, usable).
+    pose_history: Deque = field(default_factory=lambda: deque(maxlen=POSE_HISTORY))
+
+    @property
+    def pose_usable(self) -> bool:
+        return bool(self.pose_quality is not None and self.pose_quality.usable)
+
+    def attach_pose(self, pose, quality, frame_no: int) -> None:
+        """Record one frame's skeleton against this track.
+
+        Called from pipeline.py once the tracker has decided which detection
+        this track matched, so the pose lands on the persistent ID rather than
+        on a per-frame box. `pose` is the (kp_xy, kp_conf) pair the detector
+        emitted, or None.
+        """
+        if pose is None:
+            self.keypoints = self.kp_conf = self.pose_quality = None
+            return
+        self.keypoints, self.kp_conf = pose
+        self.pose_quality = quality
+        self.pose_history.append(
+            (frame_no, self.keypoints, self.kp_conf, self.pose_usable))
+
     @property
     def dwell_seconds(self) -> float:
         return max(0.0, self.last_seen - self.first_seen)
@@ -74,10 +114,19 @@ class SimpleTracker:
         self.max_coast = max_coast
         self._tracks: Dict[int, Track] = {}
         self._next_id = 1
+        # track id -> the pose of the detection it matched this frame.
+        self.matched_pose: Dict[int, object] = {}
 
-    def update(self, detections: Sequence[Tuple[BBox, float]]) -> List[Track]:
-        """detections: sequence of ((x1, y1, x2, y2) normalised, confidence)."""
+    def update(self, detections: Sequence[Tuple[BBox, float]],
+               keypoints: Optional[Sequence] = None) -> List[Track]:
+        """detections: sequence of ((x1, y1, x2, y2) normalised, confidence).
+
+        `keypoints`, when given, is index-aligned with `detections`. Which
+        detection a track matched is known only in here, so the pose is stashed
+        on `matched_pose` for pipeline.py to attach to the right ID.
+        """
         now = time.time()
+        self.matched_pose = {}
         track_ids = list(self._tracks.keys())
         unmatched_dets = set(range(len(detections)))
         matched: Dict[int, int] = {}  # track_id -> detection index
@@ -112,6 +161,8 @@ class SimpleTracker:
             t.hits += 1
             t.age = 0
             t.last_seen = now
+            if keypoints is not None and di < len(keypoints):
+                self.matched_pose[tid] = keypoints[di]
 
         for tid in track_ids:
             if tid not in matched:
@@ -121,6 +172,8 @@ class SimpleTracker:
             bbox, conf = detections[di]
             t = Track(id=self._next_id, bbox=bbox, conf=conf)
             self._tracks[self._next_id] = t
+            if keypoints is not None and di < len(keypoints):
+                self.matched_pose[self._next_id] = keypoints[di]
             self._next_id += 1
 
         for tid in [t for t, tr in self._tracks.items() if tr.age > self.max_age]:
@@ -150,12 +203,24 @@ class PassthroughTracker:
         self.min_hits = min_hits
         self.max_coast = max_coast
         self._tracks: Dict[int, Track] = {}
+        # track id -> the pose of the detection it matched this frame.
+        self.matched_pose: Dict[int, object] = {}
 
-    def update(self, detections: Sequence[Tuple[BBox, float, int]]) -> List[Track]:
+    def update(self, detections: Sequence[Tuple[BBox, float, int]],
+               keypoints: Optional[Sequence] = None) -> List[Track]:
+        """`keypoints`, when given, is index-aligned with `detections`.
+
+        Alignment is free on this path: the pose model emits boxes, IDs and
+        keypoints as rows of one result, and detector.py keeps them in step
+        through de-duplication.
+        """
         now = time.time()
+        self.matched_pose = {}
         seen = set()
-        for bbox, conf, tid in detections:
+        for i, (bbox, conf, tid) in enumerate(detections):
             seen.add(tid)
+            if keypoints is not None and i < len(keypoints):
+                self.matched_pose[tid] = keypoints[i]
             t = self._tracks.get(tid)
             if t is None:
                 t = Track(id=tid, bbox=bbox, conf=conf)
