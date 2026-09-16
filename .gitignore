@@ -17,12 +17,14 @@ __pycache__/
 *.pt
 *.onnx
 
-# Footage. The bundled workshop clip is small enough to ship and is already
-# tracked; your own recordings are not - keep them local and pass --source.
+# Footage. Recordings stay out by default - they bloat the history and only
+# ever grow. The two clips below are the exception: the RunPod pod is fed by
+# git pull, so a clip it has to run has to be in the repo to get there.
 *.mp4
 *.avi
 *.mov
 !cctv_footage.mp4
+!my_clip.mp4
 
 # Runtime output
 zone_visits.csv
