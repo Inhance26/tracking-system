@@ -17,9 +17,23 @@ __pycache__/
 *.pt
 *.onnx
 
+# Footage. The bundled workshop clip is small enough to ship and is already
+# tracked; your own recordings are not - keep them local and pass --source.
+*.mp4
+*.avi
+*.mov
+!cctv_footage.mp4
+
 # Runtime output
 zone_visits.csv
 *.log
+
+# The visit database (--db) and what export_db.py writes out of it.
+# -wal/-shm are SQLite's WAL sidecar files.
+*.db
+*.db-wal
+*.db-shm
+exports/
 
 # Self-test / audit images, regenerated on demand
 yolo_check.jpg

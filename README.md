@@ -252,6 +252,30 @@ person.
 back is a new visit with a new ID, and a long occlusion splits one stay into
 two. The totals are reliable; individual journeys are not.
 
+### Keeping the visits
+
+`--dwell-csv` appends completed visits to a CSV. `--db` writes the same visits
+to a SQLite database instead — which is the file `export_db.py` reads:
+
+```powershell
+python app.py --db footfall.db
+python export_db.py --db footfall.db
+```
+
+The two are independent; use either, both, or neither. The database is the one
+to prefer on a RunPod pod, because `export_db.py` opens it **read-only** and the
+tracker writes in WAL mode, so you can export a day's numbers without stopping
+the tracker — which is the whole point when only `/workspace` survives the pod
+being shut down.
+
+Visits still in progress when the tracker stops are closed and written on the
+way out, so the last stay of everyone on screen — often the longest of the
+session — is not lost.
+
+Every row carries a `camera_id` (`--camera-id`, default `cam1`). There is one
+camera today; the column is there so a second one does not mean migrating a
+database that is already being appended to.
+
 ---
 
 ## Pose keypoints
@@ -373,7 +397,7 @@ Counting flags: `--min-hits`, `--count-coast`, `--dedupe-ios` — see
 Pose flags: `--pose`, `--pose-weights`, `--pose-min-height`,
 `--pose-min-kp-conf`, `--pose-min-core` — see [Pose keypoints](#pose-keypoints).
 
-Other flags: `--long-dwell`, `--dwell-csv`,
+Other flags: `--long-dwell`, `--dwell-csv`, `--db`, `--camera-id`,
 `--detector` (`yolo`/`runpod`/`yolox`/`hog`/`demo`), `--yolox-model`, `--weights`
 (`yolov8n.pt` is ~2× faster and less accurate; `yolov8x.pt` is better still on a
 GPU), `--device` (`cpu`, `0`, `mps`), `--frame-skip`,
@@ -418,6 +442,7 @@ detector.py          the three detector backends (YOLO lives here)
 tracker.py           IoU + centroid tracker (used when the detector has no IDs)
 zones.py             polygon storage and point-in-polygon assignment
 dwell.py             per-zone visit timing, averages and the CSV log
+store.py             writes completed visits to the SQLite export_db.py reads
 pose.py              COCO-17 skeleton schema, quality scoring and the gate
 pose_audit.py        measures whether pose is usable on your footage
 server.py            stdlib HTTP server: MJPEG, stats, zone save/load

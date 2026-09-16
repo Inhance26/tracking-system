@@ -15,8 +15,9 @@ loses them for longer than `grace` seconds. The grace period matters: detectors
 drop people for a frame or two behind a pillar all the time, and without it a
 single stay would be chopped into a dozen fragments.
 
-Everything lives in memory and resets when the app restarts. Pass a CSV path to
-keep a durable record of completed visits.
+Everything lives in memory and resets when the app restarts. Pass a CSV path or
+a store.VisitStore to keep a durable record of completed visits; the two are
+independent, so you can have either, both, or neither.
 """
 
 from __future__ import annotations
@@ -49,9 +50,13 @@ class ZoneTotals:
 
 
 class ZoneDwell:
-    def __init__(self, grace: float = 2.0, csv_path: Optional[str] = None) -> None:
+    def __init__(self, grace: float = 2.0, csv_path: Optional[str] = None,
+                 store=None) -> None:
         self.grace = grace
         self.csv_path = csv_path
+        # A store.VisitStore, or None. Kept as a plain attribute rather than
+        # imported here so dwell.py still has no dependencies of its own.
+        self.store = store
         self._lock = threading.Lock()
         self._open: Dict[int, _OpenVisit] = {}
         self._totals: Dict[str, ZoneTotals] = {}
@@ -107,6 +112,26 @@ class ZoneDwell:
         t.max_visit_s = max(t.max_visit_s, duration)
         if self.csv_path:
             self._append_csv(pid, v.zone_id, v.since, v.last_seen, duration)
+        if self.store is not None:
+            # add_visit() swallows its own errors, for the same reason the CSV
+            # append does: logging must never take the tracker down.
+            self.store.add_visit(pid, v.zone_id, v.since, v.last_seen, duration)
+
+    def close_open(self, now: Optional[float] = None) -> int:
+        """Close every visit still in progress, and return how many.
+
+        Called when the tracker shuts down. Without it, everyone standing in a
+        zone at that moment simply vanishes: their visit is only ever written
+        when it closes, so the last stay of every person on screen - often the
+        longest one of the session - would be lost from the CSV and the
+        database alike.
+        """
+        now = now or time.time()
+        with self._lock:
+            pids = list(self._open)
+            for pid in pids:
+                self._close(pid, now)
+            return len(pids)
 
     # ------------------------------------------------------------------
     def snapshot(self, now: Optional[float] = None) -> Dict[str, dict]:

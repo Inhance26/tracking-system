@@ -21,6 +21,7 @@ import numpy as np
 import pose as pose_mod
 from detector import build_detector
 from dwell import ZoneDwell, format_duration
+from store import VisitStore
 from tracker import PassthroughTracker, SimpleTracker
 from zones import Zone, assign_zone, load_zones
 
@@ -88,7 +89,11 @@ class Pipeline(threading.Thread):
         self._zones_lock = threading.Lock()
         self._stop = threading.Event()
         self._fps_hist = deque(maxlen=30)
-        self.dwell = ZoneDwell(csv_path=getattr(cfg, "dwell_csv", None))
+        db_path = getattr(cfg, "db", None)
+        self.store = (VisitStore(db_path, camera_id=getattr(cfg, "camera_id", "cam1"))
+                      if db_path else None)
+        self.dwell = ZoneDwell(csv_path=getattr(cfg, "dwell_csv", None),
+                               store=self.store)
 
     # -- zones can be re-saved from the browser editor while we run -----------
     def reload_zones(self) -> None:
@@ -264,6 +269,14 @@ class Pipeline(threading.Thread):
                     time.sleep(sleep)
 
         cap.release()
+        # Anyone still standing in a zone has a visit that has not been written
+        # yet. Close them before the store goes away, or the last - and often
+        # longest - stay of every person on screen is lost.
+        closed = self.dwell.close_open()
+        if self.store is not None:
+            self.store.close()
+            print(f"  [store] {self.store.rows_written} zone visits written to "
+                  f"{self.cfg.db}  ({closed} still open at shutdown)")
         s = self.state.read_stats()
         s["running"] = False
         self.state.publish(self.state.read_jpeg(), self.state.read_raw_jpeg(),

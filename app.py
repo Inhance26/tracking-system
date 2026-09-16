@@ -68,6 +68,8 @@ class Config:
     runpod_timeout: float = 10.0         # seconds per-frame HTTP call may take
     long_dwell: float = 120.0          # seconds before a stay is flagged amber
     dwell_csv: str | None = None       # optional log of completed zone visits
+    db: str | None = None              # optional SQLite store, read by export_db.py
+    camera_id: str = "cam1"            # stamped on every stored visit
     # -- pose (phase 1) -----------------------------------------------------
     # Off by default: --pose swaps the detection model for a pose model, which
     # changes the headcount this app reports. Nothing about the existing
@@ -135,6 +137,14 @@ def parse_args(argv=None) -> Config:
     p.add_argument("--dwell-csv", default=None, metavar="FILE",
                    help="append every completed zone visit to a CSV "
                         "(e.g. --dwell-csv zone_visits.csv)")
+    p.add_argument("--db", default=None, metavar="FILE",
+                   help="record every completed zone visit to a SQLite database "
+                        "(e.g. --db footfall.db). This is the file export_db.py "
+                        "reads; without it, nothing writes one and the export "
+                        "has nothing to export")
+    p.add_argument("--camera-id", default="cam1",
+                   help="stamped on every row written by --db, so a second "
+                        "camera's visits stay distinguishable from this one's")
     p.add_argument("--pose", action="store_true",
                    help="extract 2D skeletons as well as boxes. Replaces the "
                         "detection model with a pose model (one pass, so "
@@ -176,6 +186,7 @@ def parse_args(argv=None) -> Config:
         runpod_endpoint=a.runpod_endpoint, runpod_api_key=a.runpod_api_key,
         runpod_timeout=a.runpod_timeout,
         long_dwell=a.long_dwell, dwell_csv=a.dwell_csv,
+        db=a.db, camera_id=a.camera_id,
         pose=a.pose, pose_weights=a.pose_weights,
         pose_min_height=a.pose_min_height, pose_min_kp_conf=a.pose_min_kp_conf,
         pose_min_core=a.pose_min_core,

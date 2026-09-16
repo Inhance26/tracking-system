@@ -44,8 +44,16 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
 TABLE = "zone_visits"
-DEFAULT_DB = "/workspace/footfall.db"
-DEFAULT_OUT_DIR = "/workspace/exports"
+
+# /workspace is the RunPod pod path this was written for, and it is still the
+# right default there. On Windows it resolves to the root of the current drive
+# (\workspace\footfall.db), which is neither writable nor where anyone put a
+# database - so fall back to beside this script when /workspace does not exist.
+_ON_POD = os.path.isdir("/workspace")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB = "/workspace/footfall.db" if _ON_POD else os.path.join(_HERE, "footfall.db")
+DEFAULT_OUT_DIR = ("/workspace/exports" if _ON_POD
+                   else os.path.join(_HERE, "exports"))
 
 # Excel refuses any cell over 32767 characters; a long journey path can get
 # there on a busy day, so paths are truncated well short of it.
@@ -75,8 +83,10 @@ def open_readonly(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
         raise ExportError(
             f"No database at {db_path}\n"
-            "  Point --db at the right file. On a RunPod pod the tracker's\n"
-            "  database normally lives at /workspace/footfall.db."
+            "  The tracker only writes one when you ask it to:\n"
+            f"    python app.py --db {db_path}\n"
+            "  Point --db here at that same file. On a RunPod pod it normally\n"
+            "  lives at /workspace/footfall.db, since only /workspace survives."
         )
     if db_path.is_dir():
         raise ExportError(f"{db_path} is a directory, not a database file.")
