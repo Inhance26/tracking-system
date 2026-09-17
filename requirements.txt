@@ -1,5 +1,13 @@
-# Core - always needed
-opencv-python>=4.8
+# Core - always needed.
+#
+# headless, not plain opencv-python: nothing in this project opens a desktop
+# window - there is no imshow/waitKey anywhere, the annotated video is served
+# as MJPEG over HTTP - so the GUI half of the normal wheel is dead weight. The
+# headless wheel drops the GUI shared libraries with it, which is what lets a
+# server or container import cv2 WITHOUT first running
+#     apt-get install -y libgl1 libglib2.0-0
+# Swap back to opencv-python if you ever add a local preview window.
+opencv-python-headless>=4.8
 numpy>=1.24
 
 # Person detection. Pulls in torch (~800 MB on first install).

@@ -5,8 +5,9 @@
 # reports the handler as missing when it lives in a subdirectory.
 #
 # Note the requirements file below is the SERVERLESS one, not the root
-# requirements.txt - the root file is for running app.py locally and has
-# no runpod SDK and a non-headless opencv, neither of which works here.
+# requirements.txt - the root file is for running app.py (video capture,
+# tracking, dashboard) and pulls in openpyxl and requests, but not the runpod
+# SDK this worker starts from. Both files use headless opencv.
 
 FROM runpod/base:0.6.2-cuda12.1.0
 
