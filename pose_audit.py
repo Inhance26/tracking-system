@@ -203,12 +203,12 @@ def draw_best(best, args) -> None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--source", default=os.path.join(HERE, "cctv_footage.mp4"))
+    p.add_argument("--source", default=os.path.join(HERE, "my_clip.mp4"))
     p.add_argument("--pose-weights", default="yolo11s-pose.pt")
     p.add_argument("--device", default=None)
     p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--imgsz", type=int, default=1280)
-    p.add_argument("--width", type=int, default=848)
+    p.add_argument("--width", type=int, default=0)
     p.add_argument("--dedupe-ios", type=float, default=0.6)
     p.add_argument("--frames", type=int, default=60,
                    help="frames to sample (pose is slower than detection, and "

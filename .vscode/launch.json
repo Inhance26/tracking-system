@@ -110,7 +110,7 @@
       "id": "videoSource",
       "type": "promptString",
       "description": "Video file path, rtsp:// URL, or webcam index (0)",
-      "default": "cctv_footage.mp4"
+      "default": "my_clip.mp4"
     }
   ]
 }

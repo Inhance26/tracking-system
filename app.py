@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Zone people-tracker - counts people per floor zone from a CCTV feed.
 
-Configured out of the box for the bundled cctv_footage.mp4, so this is enough:
+Configured out of the box for the bundled my_clip.mp4, so this is enough:
 
   python app.py
 
 Other sources:
 
+  python app.py --source cctv_footage.mp4          # the older workshop clip
   python app.py --source other_clip.mp4
   python app.py --source "rtsp://user:pass@192.168.1.50:554/Streaming/Channels/102"
   python app.py --source 0                       # USB webcam
@@ -31,17 +32,23 @@ from pipeline import Pipeline, SharedState  # noqa: E402
 from server import serve  # noqa: E402
 
 
-# Defaults are tuned for the bundled 848x478 workshop clip:
-#   width 848   - its native size, so nothing is up- or down-scaled
-#   imgsz 1280  - give YOLO far more pixels than the frame has. The workers at
-#                 the back of the shop are only ~12x40 px; measured over the
-#                 clip, 960 -> 1280 lifts the headcount from 2.6 to 3.7 against
-#                 a true 4-5. See calibrate.py.
+# Defaults are tuned for the bundled 1270x720 clip, my_clip.mp4:
+#   width 0     - keep the native size, so nothing is up- or down-scaled. The
+#                 old 848 default was the NATIVE width of the previous clip
+#                 (cctv_footage.mp4, 848x478); on this one it would downscale
+#                 for nothing and shrink the already-small distant people.
+#   imgsz 1280  - give YOLO at least as many pixels as the frame has, so small,
+#                 distant people survive the resize into the model.
 #   conf  0.25  - lower than stock, for the same reason
 #   yolov8s     - yolov8n is the smallest model in the family and misses the
-#                 distant workers; measured on this clip, s counts 4.1 vs n's
-#                 3.7 at the same input size
-DEFAULT_SOURCE = os.path.join(HERE, "cctv_footage.mp4")
+#                 distant people entirely
+#
+# The imgsz/weights numbers above were measured on the OLDER cctv_footage.mp4
+# (960 -> 1280 lifted the headcount 2.6 -> 3.7 against a true 4-5; yolov8s
+# counted 4.1 vs yolov8n's 3.7). They have NOT been re-measured on my_clip.mp4,
+# which is a different scene at a different resolution - rerun calibrate.py
+# against it before trusting the count.
+DEFAULT_SOURCE = os.path.join(HERE, "my_clip.mp4")
 
 
 @dataclass
@@ -52,7 +59,7 @@ class Config:
     device: str | None = None
     conf: float = 0.25
     imgsz: int = 1280
-    width: int = 848
+    width: int = 0
     frame_skip: int = 1
     max_age: int = 30
     min_hits: int = 3          # detections before a track joins the headcount
@@ -89,7 +96,7 @@ def parse_args(argv=None) -> Config:
     p = argparse.ArgumentParser(description="Zone people-tracker for CCTV footage")
     p.add_argument("--source", default=DEFAULT_SOURCE,
                    help="video file path, rtsp:// URL, or webcam index (e.g. 0). "
-                        "Defaults to the bundled cctv_footage.mp4")
+                        "Defaults to the bundled my_clip.mp4")
     p.add_argument("--detector", default="yolo",
                    choices=["yolo", "runpod", "yolox", "hog", "demo"],
                    help="yolo = Ultralytics, local (best, needs torch); "
@@ -116,8 +123,9 @@ def parse_args(argv=None) -> Config:
     p.add_argument("--imgsz", type=int, default=1280,
                    help="detector input size; the big lever on whether small, "
                         "distant people are found at all (was 960)")
-    p.add_argument("--width", type=int, default=848,
-                   help="processing width in px (smaller = faster; 0 keeps the native size)")
+    p.add_argument("--width", type=int, default=0,
+                   help="processing width in px (smaller = faster; 0 keeps the "
+                        "native size, which is the default)")
     p.add_argument("--frame-skip", type=int, default=1,
                    help="run detection every Nth frame (2-3 helps a lot on CPU)")
     p.add_argument("--min-hits", type=int, default=3,

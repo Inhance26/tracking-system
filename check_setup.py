@@ -4,7 +4,7 @@
     python check_setup.py
 
 Checks every dependency, loads the YOLO model, runs it over a sample of frames
-from cctv_footage.mp4, reports how many people it found, and writes
+from my_clip.mp4, reports how many people it found, and writes
 yolo_check.jpg so you can see the boxes for yourself.
 
 Run this once after installing. If it passes, `python app.py` will work.
@@ -17,7 +17,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VIDEO = os.path.join(HERE, "cctv_footage.mp4")
+VIDEO = os.path.join(HERE, "my_clip.mp4")
+VIDEO_NAME = os.path.basename(VIDEO)
 SAMPLE_FRAMES = 12
 # Kept in step with app.Config.weights / .imgsz by hand - importing app here
 # would pull in the whole pipeline just to read two constants.
@@ -46,17 +47,17 @@ def main() -> int:
 
     # ---- the video --------------------------------------------------------
     if not os.path.exists(VIDEO):
-        print(f"{BAD}cctv_footage.mp4 is not in this folder.")
+        print(f"{BAD}{VIDEO_NAME} is not in this folder.")
         return 1
     cap = cv2.VideoCapture(VIDEO)
     if not cap.isOpened():
-        print(f"{BAD}OpenCV cannot open cctv_footage.mp4 (corrupt or missing codec).")
+        print(f"{BAD}OpenCV cannot open {VIDEO_NAME} (corrupt or missing codec).")
         return 1
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    print(f"{OK}cctv_footage.mp4  {w}x{h}, {fps:.1f} fps, {n} frames")
+    print(f"{OK}{VIDEO_NAME}  {w}x{h}, {fps:.1f} fps, {n} frames")
 
     # ---- YOLO -------------------------------------------------------------
     try:

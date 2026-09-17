@@ -3,9 +3,8 @@
 Counts how many people are on the floor and which zone each one is standing in,
 from a CCTV feed. Live numbers and the annotated video render in a web browser.
 
-This copy is **pre-configured for the bundled `cctv_footage.mp4`** (the workshop
-clip, 848×478, 11.4 fps, 3 minutes) with five zones already marked in
-`zones.json`. No arguments needed:
+This copy is **pre-configured for the bundled `my_clip.mp4`** (1270×720,
+13.1 fps, ~1450 frames). No arguments needed:
 
 ```
 python app.py
@@ -166,8 +165,9 @@ it is exactly right.
 
 **Under-counting** (the usual problem) means the detector never saw someone.
 Only the model and its input size fix that; no amount of tracker tuning
-invents a missed person. On this clip, at 848×478 with workers at the back
-about 12×40 px:
+invents a missed person. The numbers below were measured on the older
+`cctv_footage.mp4` at 848×478, with workers at the back about 12×40 px. They
+have not been re-measured on `my_clip.mp4` — rerun `calibrate.py` for that:
 
 | setting | mean count |
 |---|---|
@@ -385,8 +385,8 @@ Tuned for the bundled clip; all still overridable on the command line.
 
 | Flag | Here | Stock | Why |
 |---|---|---|---|
-| `--source` | `cctv_footage.mp4` | *required* | so `python app.py` just runs |
-| `--width` | `848` | `960` | the clip's native width — no rescaling |
+| `--source` | `my_clip.mp4` | *required* | so `python app.py` just runs |
+| `--width` | `0` (native) | `960` | keep the clip's own 1270×720 — no rescaling |
 | `--imgsz` | `1280` | `640` | far more pixels than the frame has; the biggest single lever on whether the small figures at the back are found at all |
 | `--conf` | `0.25` | `0.35` | same reason — don't discard faint distant people |
 | `--host` | `127.0.0.1` | `0.0.0.0` | serves only to this machine; no firewall prompt |
@@ -449,8 +449,10 @@ server.py            stdlib HTTP server: MJPEG, stats, zone save/load
 web/dashboard.html   the live dashboard
 web/editor.html      the zone editor
 make_demo_video.py   generates synthetic test footage, if you ever want it
-cctv_footage.mp4     the workshop clip
-zones.json           the five zones traced onto it
+my_clip.mp4          the default clip (1270×720)
+cctv_footage.mp4     the older workshop clip (848×478)
+zones.json           the saved zones — traced onto the workshop clip, so
+                     redraw them in /editor for any other footage
 .vscode/             launch configurations and interpreter settings
 handler.py           the --detector runpod GPU worker (root, so RunPod finds it)
 Dockerfile           builds that worker image
@@ -498,7 +500,7 @@ screen in the office, a database, Grafana.
 
 | What you see | What to do |
 |---|---|
-| `Video file not found` | `cctv_footage.mp4` isn't beside `app.py`, or you passed a bad `--source` |
+| `Video file not found` | `my_clip.mp4` isn't beside `app.py`, or you passed a bad `--source` |
 | `The 'yolo' detector needs Ultralytics` | `pip install ultralytics`, or run the HOG launch configuration |
 | VS Code can't find `cv2` | wrong interpreter — `Ctrl+Shift+P` → Python: Select Interpreter → the `.venv` one |
 | `running scripts is disabled` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |

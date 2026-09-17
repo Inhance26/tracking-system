@@ -118,7 +118,7 @@ def report(label: str, res: dict, expect: int | None, stride: int = 1) -> None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--source", default=os.path.join(HERE, "cctv_footage.mp4"))
+    p.add_argument("--source", default=os.path.join(HERE, "my_clip.mp4"))
     p.add_argument("--detector", default="yolo",
                    choices=["yolo", "runpod", "yolox", "hog"])
     # Defaults mirror app.Config so a bare run measures what the app does.
@@ -126,7 +126,7 @@ def main(argv=None) -> int:
     p.add_argument("--device", default=None)
     p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--imgsz", type=int, default=1280)
-    p.add_argument("--width", type=int, default=848)
+    p.add_argument("--width", type=int, default=0)
     p.add_argument("--frames", type=int, default=300, help="frames to sample")
     p.add_argument("--stride", type=int, default=1,
                    help="sample every Nth frame to cover more of the clip")
